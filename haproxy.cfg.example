@@ -1,0 +1,49 @@
+global
+    maxconn 256
+    lua-load /usr/local/etc/haproxy/acme-http01-webroot.lua
+    chroot /jail
+    ssl-default-bind-ciphers AES256+EECDH:AES256+EDH:!aNULL;
+    tune.ssl.default-dh-param 4096
+
+defaults
+    mode http
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+    option forwardfor
+    option http-server-close
+
+frontend http
+    bind *:80
+    mode http
+    acl url_acme_http01 path_beg /.well-known/acme-challenge/
+    http-request use-service lua.acme-http01 if METH_GET url_acme_http01
+    redirect scheme https code 301 if !{ ssl_fc }
+
+frontend ft_ssl_vip
+    bind *:443 ssl crt /usr/local/etc/haproxy/certs/ no-sslv3 no-tls-tickets no-tlsv10 no-tlsv11
+
+    rspadd Strict-Transport-Security:\ max-age=15768000
+
+    default_backend www
+
+    ## Define hosts
+    acl host_a hdr(host) -i a.example.com
+    acl host_b hdr(host) -i b.example.com
+
+    ## figure out which one to use
+    use_backend backend_a if host_a
+    use_backend backend_b if host_b
+
+
+backend backend_a
+    # forward requests to a server over http
+    server a 192.168.0.2:80
+
+backend backend_b
+    # forward requests to a server over https
+    server b 192.168.0.3:443 ssl verify none sni req.hdr(Host)
+
+backend www
+    server www www:80 check
+    http-request add-header X-Forwarded-Proto https if { ssl_fc }
